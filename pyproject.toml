@@ -6,6 +6,7 @@ dependencies = [
     "pyyaml>=6.0",
     "click>=8.0",
     "gepa>=0.1.0",
+    "litellm>=1.0",
 ]
 
 [project.optional-dependencies]
@@ -14,10 +15,16 @@ sdk = [
 ]
 dev = [
     "pytest>=7.0",
+    "pytest-timeout>=2.0",
 ]
 
 [project.scripts]
 cc-optimize = "cc_optimize.cli:main"
+
+[tool.pytest.ini_options]
+markers = [
+    "e2e: end-to-end tests requiring real LLM calls (deselect with '-m not e2e')",
+]
 
 [build-system]
 requires = ["setuptools>=68.0"]

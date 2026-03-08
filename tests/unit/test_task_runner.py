@@ -83,9 +83,12 @@ class TestRunTaskCreatesPathsCorrectly:
         assert result.timed_out is False
         assert result.early_stopped is False
 
-        # Verify worktree creation was attempted
-        mock_run.assert_called_once()
-        worktree_call = mock_run.call_args
+        # Verify worktree prune + creation were attempted
+        assert mock_run.call_count == 2
+        prune_call = mock_run.call_args_list[0]
+        assert "worktree" in prune_call[0][0]
+        assert "prune" in prune_call[0][0]
+        worktree_call = mock_run.call_args_list[1]
         assert "worktree" in worktree_call[0][0]
         assert "add" in worktree_call[0][0]
 
@@ -204,8 +207,10 @@ class TestRunTaskWorktreeFallback:
         (repo_path / ".git").mkdir()
         output_dir = tmp_path / "output"
 
-        # First call (worktree add) fails, second and third (clone, checkout) succeed
+        # First call (worktree prune) succeeds, second (worktree add) fails,
+        # third and fourth (clone, checkout) succeed
         mock_run.side_effect = [
+            MagicMock(returncode=0),  # git worktree prune
             subprocess.CalledProcessError(1, "git worktree add", stderr="error"),
             MagicMock(returncode=0),  # git clone
             MagicMock(returncode=0),  # git checkout
@@ -230,6 +235,6 @@ class TestRunTaskWorktreeFallback:
         with patch("cc_optimize.adapter.task_runner.time.time", side_effect=time_side_effect):
             result = run_task(task, candidate, output_dir)
 
-        # Should have called worktree add, then clone, then checkout
-        assert mock_run.call_count == 3
+        # Should have called worktree prune, worktree add, then clone, then checkout
+        assert mock_run.call_count == 4
         assert result.exit_code == 0

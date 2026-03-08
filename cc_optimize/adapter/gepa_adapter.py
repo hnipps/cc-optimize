@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import statistics
 import uuid
 from pathlib import Path
 
@@ -28,12 +29,16 @@ class ClaudeCodeAdapter(gepa.GEPAAdapter):
         work_dir: Path,
         early_stop_config: EarlyStopConfig | None = None,
         settings_json: dict | None = None,
+        num_trials: int = 1,
     ):
         self.suite = suite
         self.work_dir = work_dir
         self.early_stop_config = early_stop_config or EarlyStopConfig()
         self.settings_json = settings_json or {}
+        self.num_trials = num_trials
         self._task_map: dict[str, BenchmarkTask] = {t.id: t for t in suite.tasks}
+        self.total_tokens_consumed: int = 0
+        self.total_early_stop_tokens_saved: int = 0
         (work_dir / "traces").mkdir(parents=True, exist_ok=True)
         (work_dir / "worktrees").mkdir(parents=True, exist_ok=True)
 
@@ -59,30 +64,63 @@ class ClaudeCodeAdapter(gepa.GEPAAdapter):
                 logger.warning("Task %s not found in suite, skipping", task_id)
                 continue
 
-            run_result = run_task(
-                task=task,
-                candidate=config,
-                output_dir=self.work_dir,
-                early_stop_config=self.early_stop_config,
-            )
+            trial_results: list[tuple[TaskResult, RunResult, float, dict[str, float]]] = []
 
-            task_result = evaluate_task_run(task, config, run_result)
-            outputs.append(task_result)
+            for trial in range(self.num_trials):
+                if self.num_trials > 1:
+                    logger.info("Task %s trial %d/%d", task_id, trial + 1, self.num_trials)
 
-            baselines = task.signal_baselines
-            criteria_total = len(task_result.criteria_results)
-            criteria_passed = sum(task_result.criteria_results.values())
-            correctness = criteria_passed / criteria_total if criteria_total > 0 else 0.0
-            efficiency = task_result.signals.efficiency_score
-            quality = compute_conversation_quality(task_result.signals, baselines)
-            score = 0.5 * correctness + 0.25 * efficiency + 0.25 * quality
+                run_result = run_task(
+                    task=task,
+                    candidate=config,
+                    output_dir=self.work_dir,
+                    early_stop_config=self.early_stop_config,
+                )
 
-            scores.append(score)
-            objective_scores.append({
-                "correctness": correctness,
-                "efficiency": efficiency,
-                "quality": quality,
-            })
+                task_result = evaluate_task_run(task, config, run_result)
+
+                baselines = task.signal_baselines
+                criteria_total = len(task_result.criteria_results)
+                criteria_passed = sum(task_result.criteria_results.values())
+                correctness = criteria_passed / criteria_total if criteria_total > 0 else 0.0
+                efficiency = task_result.signals.efficiency_score
+                quality = compute_conversation_quality(task_result.signals, baselines)
+                score = 0.5 * correctness + 0.25 * efficiency + 0.25 * quality
+
+                obj = {"correctness": correctness, "efficiency": efficiency, "quality": quality}
+                trial_results.append((task_result, run_result, score, obj))
+
+                self._cleanup_worktree(run_result.worktree_path, task)
+
+                # Accumulate token metrics
+                self.total_tokens_consumed += task_result.tokens_total
+                if run_result.early_stopped and run_result.wall_time_seconds > 0:
+                    ratio = task.timeout_seconds / run_result.wall_time_seconds
+                    saved = int(task_result.tokens_total * max(0, ratio - 1))
+                    self.total_early_stop_tokens_saved += saved
+
+            if self.num_trials == 1:
+                task_result, run_result, score, obj = trial_results[0]
+                outputs.append(task_result)
+                scores.append(score)
+                objective_scores.append(obj)
+            else:
+                # Average scores across trials
+                trial_scores = [t[2] for t in trial_results]
+                avg_score = statistics.mean(trial_scores)
+                avg_obj = {
+                    key: statistics.mean(t[3][key] for t in trial_results)
+                    for key in trial_results[0][3]
+                }
+                scores.append(avg_score)
+                objective_scores.append(avg_obj)
+
+                # Use median trial's TaskResult for reflection
+                median_idx = sorted(
+                    range(len(trial_scores)), key=lambda i: trial_scores[i]
+                )[len(trial_scores) // 2]
+                outputs.append(trial_results[median_idx][0])
+                task_result = trial_results[median_idx][0]
 
             if capture_traces:
                 trajectories.append({
@@ -90,8 +128,6 @@ class ClaudeCodeAdapter(gepa.GEPAAdapter):
                     "session_trace_path": str(task_result.session_trace_path),
                     "success": task_result.success,
                 })
-
-            self._cleanup_worktree(run_result.worktree_path, task)
 
         return EvaluationBatch(
             outputs=outputs,

@@ -114,6 +114,83 @@ class TestFileContains:
         assert results["no version"] is False
 
 
+class TestFileContainsMultiline:
+    """Test that re.DOTALL allows patterns to match across lines."""
+
+    def test_dotall_pattern_matches_across_lines(self, tmp_path: Path) -> None:
+        (tmp_path / "module.py").write_text(
+            'def notify(user):\n'
+            '    """Send notification.\n'
+            '\n'
+            '    Args:\n'
+            '        user: The target user.\n'
+            '    """\n'
+            '    pass\n'
+        )
+        task = _make_task([
+            SuccessCriterion(
+                type="file_contains",
+                path="module.py",
+                pattern=r'""".*Args:.*"""',
+                description="docstring with args",
+            ),
+        ])
+        results = check_success(task, tmp_path)
+        assert results["docstring with args"] is True
+
+    def test_dotall_pattern_no_match(self, tmp_path: Path) -> None:
+        (tmp_path / "module.py").write_text(
+            'def notify(user):\n'
+            '    """Send notification."""\n'
+            '    pass\n'
+        )
+        task = _make_task([
+            SuccessCriterion(
+                type="file_contains",
+                path="module.py",
+                pattern=r'""".*Args:.*"""',
+                description="docstring with args",
+            ),
+        ])
+        results = check_success(task, tmp_path)
+        assert results["docstring with args"] is False
+
+
+class TestFileNotContainsMultiline:
+    def test_dotall_not_contains_passes_when_absent(self, tmp_path: Path) -> None:
+        (tmp_path / "module.py").write_text("def foo():\n    pass\n")
+        task = _make_task([
+            SuccessCriterion(
+                type="file_not_contains",
+                path="module.py",
+                pattern=r'""".*Args:.*"""',
+                description="no docstring args",
+            ),
+        ])
+        results = check_success(task, tmp_path)
+        assert results["no docstring args"] is True
+
+    def test_dotall_not_contains_fails_when_present(self, tmp_path: Path) -> None:
+        (tmp_path / "module.py").write_text(
+            'def foo():\n'
+            '    """Do stuff.\n'
+            '\n'
+            '    Args:\n'
+            '        x: value\n'
+            '    """\n'
+        )
+        task = _make_task([
+            SuccessCriterion(
+                type="file_not_contains",
+                path="module.py",
+                pattern=r'""".*Args:.*"""',
+                description="no docstring args",
+            ),
+        ])
+        results = check_success(task, tmp_path)
+        assert results["no docstring args"] is False
+
+
 class TestFileNotContains:
     def test_absent_passes(self, tmp_path: Path) -> None:
         (tmp_path / "code.py").write_text("def foo():\n    pass\n")

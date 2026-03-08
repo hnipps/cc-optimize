@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import statistics
 from pathlib import Path
 
 import click
@@ -52,12 +53,17 @@ def seed(repo_path: Path, output: Path):
 @click.argument("suite_path", type=click.Path(exists=True, path_type=Path))
 @click.option("--output-dir", "-o", default="baseline", type=click.Path(path_type=Path),
               help="Output directory for baseline results.")
-def baseline(suite_path: Path, output_dir: Path):
+@click.option("--num-trials", "-t", default=1, type=int,
+              help="Number of trials per task for averaging (reduces LLM noise).")
+def baseline(suite_path: Path, output_dir: Path, num_trials: int):
     """Run all benchmark tasks with current config and report results."""
     from cc_optimize.adapter.config_reader import read_config
     from cc_optimize.adapter.task_runner import run_task
     from cc_optimize.benchmark.loader import load_suite
-    from cc_optimize.evaluation.evaluator import evaluate_task_run
+    from cc_optimize.evaluation.evaluator import (
+        compute_conversation_quality,
+        evaluate_task_run,
+    )
 
     suite = load_suite(suite_path)
     config = read_config(suite.repo_path)
@@ -65,20 +71,74 @@ def baseline(suite_path: Path, output_dir: Path):
 
     click.echo(f"Running baseline for suite: {suite.name}")
     click.echo(f"Tasks: {len(suite.tasks)}")
+    if num_trials > 1:
+        click.echo(f"Trials per task: {num_trials}")
     click.echo()
 
     results = []
     for task in suite.tasks:
         click.echo(f"Running {task.id}...")
-        run_result = run_task(task, config, output_dir)
-        task_result = evaluate_task_run(task, config, run_result)
-        results.append(task_result)
-        status = "PASS" if task_result.success else "FAIL"
-        click.echo(
-            f"  {status} | efficiency={task_result.signals.efficiency_score:.2f} "
-            f"| turns={task_result.signals.turn_count} "
-            f"| tokens={task_result.tokens_total}"
-        )
+
+        trial_results = []
+        for trial in range(num_trials):
+            if num_trials > 1:
+                click.echo(f"  Trial {trial + 1}/{num_trials}...")
+            run_result = run_task(task, config, output_dir)
+            task_result = evaluate_task_run(task, config, run_result)
+            trial_results.append(task_result)
+
+        if num_trials == 1:
+            task_result = trial_results[0]
+            results.append(task_result)
+            status = "PASS" if task_result.success else "FAIL"
+            click.echo(
+                f"  {status} | efficiency={task_result.signals.efficiency_score:.2f} "
+                f"| turns={task_result.signals.turn_count} "
+                f"| tokens={task_result.tokens_total}"
+            )
+        else:
+            # Compute averaged scores across trials
+            baselines = task.signal_baselines
+            trial_scores = []
+            trial_correctness = []
+            trial_efficiency = []
+            trial_quality = []
+            for tr in trial_results:
+                criteria_total = len(tr.criteria_results)
+                criteria_passed = sum(tr.criteria_results.values())
+                correctness = criteria_passed / criteria_total if criteria_total > 0 else 0.0
+                efficiency = tr.signals.efficiency_score
+                quality = compute_conversation_quality(tr.signals, baselines)
+                score = 0.5 * correctness + 0.25 * efficiency + 0.25 * quality
+                trial_correctness.append(correctness)
+                trial_efficiency.append(efficiency)
+                trial_quality.append(quality)
+                trial_scores.append(score)
+
+            mean_score = statistics.mean(trial_scores)
+            stddev_score = statistics.stdev(trial_scores) if len(trial_scores) > 1 else 0.0
+
+            # Majority vote for pass/fail
+            pass_count = sum(1 for tr in trial_results if tr.success)
+            majority_pass = pass_count > num_trials / 2
+            status = "PASS" if majority_pass else "FAIL"
+
+            # Use the median trial result as representative
+            median_idx = sorted(range(len(trial_scores)), key=lambda i: trial_scores[i])[len(trial_scores) // 2]
+            results.append(trial_results[median_idx])
+
+            click.echo(
+                f"  {status} | score={mean_score:.3f} (stddev={stddev_score:.3f}) "
+                f"| correctness={statistics.mean(trial_correctness):.2f} "
+                f"| efficiency={statistics.mean(trial_efficiency):.2f} "
+                f"| quality={statistics.mean(trial_quality):.2f} "
+                f"| pass_rate={pass_count}/{num_trials}"
+            )
+
+        if not task_result.success:
+            for desc, passed in task_result.criteria_results.items():
+                mark = "PASS" if passed else "FAIL"
+                click.echo(f"    [{mark}] {desc}")
 
     passed = sum(1 for r in results if r.success)
     click.echo()
@@ -92,7 +152,9 @@ def baseline(suite_path: Path, output_dir: Path):
               help="Output directory for optimization results.")
 @click.option("--config", "config_path", default=None, type=click.Path(path_type=Path),
               help="Path to optimization config YAML.")
-def optimize(suite_path: Path, max_calls: int, output_dir: Path, config_path: Path | None):
+@click.option("--num-trials", "-t", default=None, type=int,
+              help="Number of trials per task for averaging (reduces LLM noise).")
+def optimize(suite_path: Path, max_calls: int, output_dir: Path, config_path: Path | None, num_trials: int | None):
     """Run GEPA optimization loop on Claude Code config."""
     from cc_optimize.benchmark.loader import load_suite
     from cc_optimize.config import GlobalConfig
@@ -101,12 +163,16 @@ def optimize(suite_path: Path, max_calls: int, output_dir: Path, config_path: Pa
 
     global_config = GlobalConfig.load(config_path)
     global_config.optimization.max_metric_calls = max_calls
+    if num_trials is not None:
+        global_config.optimization.num_trials = num_trials
 
     suite = load_suite(suite_path)
     seed_config = generate_seed(suite.repo_path)
 
     click.echo(f"Starting optimization for suite: {suite.name}")
     click.echo(f"Max metric calls: {max_calls}")
+    if global_config.optimization.num_trials > 1:
+        click.echo(f"Trials per evaluation: {global_config.optimization.num_trials}")
     click.echo()
 
     report = run_optimization(

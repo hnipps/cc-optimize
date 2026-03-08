@@ -28,6 +28,7 @@ class OptimizationConfig:
     score_threshold: float = 0.95
     score_weights: tuple[float, float, float] = (0.5, 0.25, 0.25)
     reflection_model: str = "anthropic/claude-sonnet-4-20250514"
+    num_trials: int = 1
 
 
 @dataclass
@@ -84,6 +85,7 @@ class GlobalConfig:
                 reflection_model=opt.get(
                     "reflection_model", "anthropic/claude-sonnet-4-20250514"
                 ),
+                num_trials=opt.get("num_trials", 1),
             )
         return config
 
@@ -107,6 +109,7 @@ class GlobalConfig:
                 "score_threshold": self.optimization.score_threshold,
                 "score_weights": list(self.optimization.score_weights),
                 "reflection_model": self.optimization.reflection_model,
+                "num_trials": self.optimization.num_trials,
             },
         }
         path.parent.mkdir(parents=True, exist_ok=True)

@@ -67,7 +67,7 @@ def _check_single(criterion: SuccessCriterion, worktree_path: Path) -> bool:
             return False
         content = file_path.read_text()
         if criterion.pattern:
-            return bool(re.search(criterion.pattern, content))
+            return bool(re.search(criterion.pattern, content, re.DOTALL))
         if criterion.substring:
             return criterion.substring in content
         return False
@@ -81,7 +81,7 @@ def _check_single(criterion: SuccessCriterion, worktree_path: Path) -> bool:
             return True
         content = file_path.read_text()
         if criterion.pattern:
-            return not bool(re.search(criterion.pattern, content))
+            return not bool(re.search(criterion.pattern, content, re.DOTALL))
         if criterion.substring:
             return criterion.substring not in content
         return True

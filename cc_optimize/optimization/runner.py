@@ -37,6 +37,7 @@ def run_optimization(
         work_dir=work_dir,
         early_stop_config=early_stop_config or EarlyStopConfig(),
         settings_json=seed_config.settings_json,
+        num_trials=config.num_trials,
     )
 
     start_time = time.time()
@@ -75,15 +76,49 @@ def run_optimization(
             "score": score,
         })
 
+    # Build per-task comparison: seed scores vs best scores
+    per_task_comparison: dict[str, dict] = {}
+    val_subscores = getattr(result, "val_subscores", [])
+    raw_best_idx = getattr(result, "best_idx", None)
+    best_idx = raw_best_idx if isinstance(raw_best_idx, int) else (len(val_scores) - 1 if val_scores else 0)
+    if val_subscores:
+        seed_subscores = val_subscores[0] if len(val_subscores) > 0 else {}
+        best_subscores = val_subscores[best_idx] if best_idx < len(val_subscores) else {}
+        all_task_ids = set(seed_subscores) | set(best_subscores)
+        for task_id in all_task_ids:
+            seed_score = seed_subscores.get(task_id, 0.0)
+            best_score = best_subscores.get(task_id, 0.0)
+            per_task_comparison[str(task_id)] = {
+                "seed_score": seed_score,
+                "best_score": best_score,
+            }
+
+    # Build signal improvements from per-objective aggregate scores
+    signal_improvements: dict[str, dict] = {}
+    val_aggregate_subscores = getattr(result, "val_aggregate_subscores", None) or []
+    if val_aggregate_subscores:
+        seed_objectives = val_aggregate_subscores[0] if len(val_aggregate_subscores) > 0 else {}
+        best_objectives = (
+            val_aggregate_subscores[best_idx]
+            if best_idx < len(val_aggregate_subscores)
+            else {}
+        )
+        all_objectives = set(seed_objectives) | set(best_objectives)
+        for obj_name in all_objectives:
+            signal_improvements[obj_name] = {
+                "before": seed_objectives.get(obj_name, 0.0),
+                "after": best_objectives.get(obj_name, 0.0),
+            }
+
     return OptimizationReport(
         seed_candidate=seed_config,
         best_candidate=best_candidate,
         pareto_front=pareto_front,
         total_metric_calls=getattr(result, "total_metric_calls", 0),
-        total_tokens_consumed=0,
-        tokens_saved_by_early_stopping=0,
-        per_task_comparison={},
-        signal_improvements={},
+        total_tokens_consumed=adapter.total_tokens_consumed,
+        tokens_saved_by_early_stopping=adapter.total_early_stop_tokens_saved,
+        per_task_comparison=per_task_comparison,
+        signal_improvements=signal_improvements,
         optimization_trace=optimization_trace,
         wall_time_seconds=wall_time,
     )

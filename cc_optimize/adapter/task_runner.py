@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
 import signal
 import subprocess
 import time
@@ -34,7 +35,7 @@ def _create_worktree(repo_path: Path, worktree_path: Path, git_ref: str) -> bool
     """Create a git worktree. Returns True on success, False on failure."""
     try:
         subprocess.run(
-            ["git", "-C", str(repo_path), "worktree", "add", str(worktree_path), git_ref],
+            ["git", "-C", str(repo_path), "worktree", "add", "--detach", str(worktree_path), git_ref],
             check=True,
             capture_output=True,
             text=True,
@@ -47,6 +48,8 @@ def _create_worktree(repo_path: Path, worktree_path: Path, git_ref: str) -> bool
 
 def _fallback_checkout(repo_path: Path, worktree_path: Path, git_ref: str) -> None:
     """Fallback: clone/copy the repo and checkout the ref."""
+    if worktree_path.exists():
+        shutil.rmtree(worktree_path)
     worktree_path.mkdir(parents=True, exist_ok=True)
     subprocess.run(
         ["git", "clone", "--shared", str(repo_path), str(worktree_path)],
@@ -89,6 +92,11 @@ def run_task(
     stderr_path = traces_dir / f"{task.id}_{timestamp}.stderr"
 
     # 1. Create worktree (with fallback)
+    subprocess.run(
+        ["git", "-C", str(task.repo_path), "worktree", "prune"],
+        capture_output=True,
+        text=True,
+    )
     if not _create_worktree(task.repo_path, worktree_path, task.git_ref):
         logger.info("Worktree creation failed, using fallback checkout approach")
         _fallback_checkout(task.repo_path, worktree_path, task.git_ref)
@@ -103,6 +111,7 @@ def run_task(
         task.prompt,
         "--output-format",
         "stream-json",
+        "--verbose",
         "--dangerously-skip-permissions",
     ]
 

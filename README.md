@@ -35,6 +35,13 @@ uv tool install cc-optimize --with claude-agent-sdk   # Claude Agent SDK support
 - **Claude Code CLI** installed and authenticated (`claude` command available)
 - A **target repository** with git initialized
 - A **benchmark suite** — a set of coding tasks to evaluate against
+- **API key for the reflection model** — the optimization loop uses an LLM to propose config mutations. By default this is `anthropic/claude-sonnet-4-20250514`, which requires an `ANTHROPIC_API_KEY` environment variable:
+
+  ```bash
+  export ANTHROPIC_API_KEY=sk-ant-...
+  ```
+
+  If you use a different provider (e.g. OpenAI), set the corresponding key (`OPENAI_API_KEY`, etc.) and change `reflection_model` in your config. See [Configuration](#configuration) for details.
 
 ### Step 1: Create a benchmark suite
 

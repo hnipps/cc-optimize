@@ -86,6 +86,8 @@ class TestClaudeCodeAdapter:
         mock_run.return_value = MagicMock(
             worktree_path=tmp_path / "wt",
             session_jsonl_path=tmp_path / "trace.jsonl",
+            early_stopped=False,
+            wall_time_seconds=10.0,
         )
         mock_eval.return_value = _make_task_result()
 
@@ -142,6 +144,68 @@ class TestClaudeCodeAdapter:
         assert "Generated Outputs" in entry
         assert "Feedback" in entry
         assert "PASS" in entry["Feedback"]
+
+    @patch("cc_optimize.adapter.gepa_adapter.run_task")
+    @patch("cc_optimize.adapter.gepa_adapter.evaluate_task_run")
+    def test_evaluate_accumulates_tokens(self, mock_eval, mock_run, tmp_path: Path):
+        suite = _make_suite(tmp_path)
+        adapter = ClaudeCodeAdapter(suite=suite, work_dir=tmp_path / "work")
+
+        mock_run.return_value = MagicMock(
+            worktree_path=tmp_path / "wt",
+            session_jsonl_path=tmp_path / "trace.jsonl",
+            early_stopped=False,
+            wall_time_seconds=10.0,
+        )
+        mock_eval.return_value = _make_task_result()
+
+        with patch.object(adapter, "_cleanup_worktree"):
+            adapter.evaluate([{"task_id": "task-1"}], {"claude_md": "test"})
+
+        assert adapter.total_tokens_consumed == 150
+        assert adapter.total_early_stop_tokens_saved == 0
+
+    @patch("cc_optimize.adapter.gepa_adapter.run_task")
+    @patch("cc_optimize.adapter.gepa_adapter.evaluate_task_run")
+    def test_evaluate_accumulates_tokens_across_calls(self, mock_eval, mock_run, tmp_path: Path):
+        suite = _make_suite(tmp_path)
+        adapter = ClaudeCodeAdapter(suite=suite, work_dir=tmp_path / "work")
+
+        mock_run.return_value = MagicMock(
+            worktree_path=tmp_path / "wt",
+            session_jsonl_path=tmp_path / "trace.jsonl",
+            early_stopped=False,
+            wall_time_seconds=10.0,
+        )
+        mock_eval.return_value = _make_task_result()
+
+        with patch.object(adapter, "_cleanup_worktree"):
+            adapter.evaluate([{"task_id": "task-1"}], {"claude_md": "test"})
+            adapter.evaluate([{"task_id": "task-1"}], {"claude_md": "test"})
+
+        assert adapter.total_tokens_consumed == 300
+
+    @patch("cc_optimize.adapter.gepa_adapter.run_task")
+    @patch("cc_optimize.adapter.gepa_adapter.evaluate_task_run")
+    def test_evaluate_early_stop_tokens_saved(self, mock_eval, mock_run, tmp_path: Path):
+        suite = _make_suite(tmp_path)
+        adapter = ClaudeCodeAdapter(suite=suite, work_dir=tmp_path / "work")
+
+        # Task timeout is 600s (default), run stopped early at 100s with 150 tokens
+        # Savings = 150 * max(0, 600/100 - 1) = 150 * 5 = 750
+        mock_run.return_value = MagicMock(
+            worktree_path=tmp_path / "wt",
+            session_jsonl_path=tmp_path / "trace.jsonl",
+            early_stopped=True,
+            wall_time_seconds=100.0,
+        )
+        mock_eval.return_value = _make_task_result()
+
+        with patch.object(adapter, "_cleanup_worktree"):
+            adapter.evaluate([{"task_id": "task-1"}], {"claude_md": "test"})
+
+        assert adapter.total_tokens_consumed == 150
+        assert adapter.total_early_stop_tokens_saved == 750
 
     def test_build_feedback(self, tmp_path: Path):
         suite = _make_suite(tmp_path)
