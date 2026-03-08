@@ -74,7 +74,11 @@ def parse(jsonl_path: Path) -> ParsedSession:
 
         if etype == "assistant":
             in_assistant_turn = True
-            content = event.get("content", [])
+            # Content is nested under event.message.content per the Claude Code
+            # JSONL schema (spec Section 4.1). Previously read from event.content
+            # which was incorrect — that field doesn't exist in the spec'd format.
+            message = event.get("message", {})
+            content = message.get("content", []) if isinstance(message, dict) else []
             if isinstance(content, str):
                 current_texts.append(content)
                 continue
@@ -116,8 +120,9 @@ def parse(jsonl_path: Path) -> ParsedSession:
                 current_tool_calls = []
                 in_assistant_turn = False
 
-            # Process tool_result content blocks
-            content = event.get("content", [])
+            # Process tool_result content blocks (nested under event.message.content)
+            message = event.get("message", {})
+            content = message.get("content", []) if isinstance(message, dict) else []
             if isinstance(content, list):
                 for block in content:
                     if not isinstance(block, dict):
@@ -154,7 +159,7 @@ def parse(jsonl_path: Path) -> ParsedSession:
             )
         )
 
-    # Extract token usage from result event
+    # Extract token usage from result event, or aggregate from assistant events
     result_events = [e for e in events if e.get("type") == "result"]
     if result_events:
         result_event = result_events[-1]
@@ -162,9 +167,20 @@ def parse(jsonl_path: Path) -> ParsedSession:
         total_input_tokens = usage.get("input_tokens", 0)
         total_output_tokens = usage.get("output_tokens", 0)
     else:
-        logger.warning("No result event found in %s; token counts set to 0", jsonl_path)
+        # Fallback: aggregate usage from individual assistant message events.
+        # This handles cases where the session was terminated before the
+        # final result event was emitted (e.g. timeout, early stop, kill).
         total_input_tokens = 0
         total_output_tokens = 0
+        for e in events:
+            if e.get("type") == "assistant":
+                usage = e.get("message", {}).get("usage", {})
+                total_input_tokens += usage.get("input_tokens", 0)
+                total_input_tokens += usage.get("cache_read_input_tokens", 0)
+                total_input_tokens += usage.get("cache_creation_input_tokens", 0)
+                total_output_tokens += usage.get("output_tokens", 0)
+        if total_input_tokens == 0 and total_output_tokens == 0:
+            logger.warning("No token usage found in %s", jsonl_path)
 
     return ParsedSession(
         assistant_blocks=assistant_blocks,
