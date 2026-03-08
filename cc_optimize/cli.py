@@ -162,7 +162,11 @@ def apply_cmd(candidate_path: Path, repo_path: Path):
         click.echo("Aborted.")
         return
 
-    apply_config(candidate, repo_path)
+    try:
+        apply_config(candidate, repo_path)
+    except ValueError as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1)
     click.echo("Applied successfully.")
 
 
