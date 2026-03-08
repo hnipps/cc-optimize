@@ -1,0 +1,5 @@
+name: chainstats
+repo_path: /home/user/projects/chainstats
+description: "ChainStats benchmark suite — Go/Laravel/Python multi-stack"
+tasks:
+  - tasks/go-api-endpoint.yaml

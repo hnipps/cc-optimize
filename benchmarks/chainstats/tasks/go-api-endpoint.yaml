@@ -1,0 +1,36 @@
+id: go-api-endpoint
+name: "Add Go API endpoint for user preferences"
+category: feature
+prompt: |
+  Add a new REST endpoint GET /api/v1/preferences/{user_id} in internal/handlers/.
+  The handler should:
+  - Validate that user_id is a valid UUID
+  - Call the existing PreferenceService.GetByUserID method
+  - Return a JSON response using the standard response envelope
+  - Return 404 if the user has no preferences
+  - Add appropriate tests in internal/handlers/preferences_test.go
+git_ref: "benchmark/go-api-endpoint-start"
+timeout_seconds: 600
+signal_baselines:
+  efficiency_turn_baseline: 15
+  max_looping_severity: 0
+  max_tool_error_cascade: 2
+  max_repair_frequency: 0.15
+success_criteria:
+  - type: command_exit_code
+    command: "go test ./internal/handlers/... -run TestPreferences -count=1"
+    description: "Preferences handler tests pass"
+  - type: command_exit_code
+    command: "go build ./..."
+    description: "Project compiles"
+  - type: file_exists
+    path: "internal/handlers/preferences.go"
+    description: "Handler file created"
+  - type: file_contains
+    path: "internal/handlers/preferences.go"
+    pattern: "func.*GetPreferences.*http\\.ResponseWriter"
+    description: "Handler function has correct signature"
+  - type: git_diff_excludes
+    paths: ["go.mod", "go.sum"]
+    description: "No dependency changes"
+tags: [go, api, handlers, feature]
