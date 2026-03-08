@@ -1,0 +1,6 @@
+{"type": "system", "content": "You are a helpful coding assistant."}
+{"type": "assistant", "content": [{"type": "text", "text": "I'll read the file first to understand the code."}, {"type": "tool_use", "id": "tu_01", "name": "Read", "input": {"file_path": "/src/main.py"}}]}
+{"type": "user", "content": [{"type": "tool_result", "tool_use_id": "tu_01", "content": "def main():\n    print('hello')", "is_error": false}]}
+{"type": "assistant", "content": [{"type": "text", "text": "Now I'll update the file to add the new feature."}, {"type": "tool_use", "id": "tu_02", "name": "Edit", "input": {"file_path": "/src/main.py", "content": "def main():\n    print('hello world')"}}]}
+{"type": "user", "content": [{"type": "tool_result", "tool_use_id": "tu_02", "content": "File updated successfully.", "is_error": false}]}
+{"type": "result", "usage": {"input_tokens": 1500, "output_tokens": 350}}
